@@ -1,0 +1,321 @@
+// ============================================================================
+// Standalone NMAP - Network Port Scanner
+// ============================================================================
+// Network port scanning tool with service detection and extended info
+// Usage: nmap <ip> [-r] [-e]
+//
+// Options:
+//   <ip>     Target IP address
+//   -r       Scan remote IP (random)
+//   -e       Extended info (WHOIS, firewall, ESSID/BSSID)
+//
+shell=get_shell
+computer=host_computer(shell)
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+// Color functions
+colorWrap=function(text,code)
+  return "<color="+code+">"+text+"</color>"
+end function
+liteGrey=function(text)
+  return colorWrap(text,"#aaa")
+end function
+grey=function(text)
+  return colorWrap(text,"#888")
+end function
+green=function(text)
+  return colorWrap(text,"#0f0")
+end function
+red=function(text)
+  return colorWrap(text,"#f00")
+end function
+blue=function(text)
+  return colorWrap(text,"#00f")
+end function
+yellow=function(text)
+  return colorWrap(text,"#ff0")
+end function
+lime=function(text)
+  return colorWrap(text,"#0f0")
+end function
+white=function(text)
+  return colorWrap(text,"#fff")
+end function
+orange=function(text)
+  return colorWrap(text,"#ffa500")
+end function
+purple=function(text)
+  return colorWrap(text,"#800080")
+end function
+// Left-justify string to specified width
+ljust=function(text,width)
+  if len(text)>=width then return text
+  return text+(" "*(width-len(text)))
+end function
+// Simple error message
+showError=function(msg)
+  print "<color=red>[ERROR]</color> "+msg
+end function
+// Simple info message
+showInfo=function(msg)
+  print "<color=cyan>[INFO]</color> "+msg
+end function
+// Network lookup - resolve hostname to IP
+netLookup=function(target)
+  result=nslookup(target)
+  if not result then return target
+  lines=split(result,char(10))
+  for line in lines
+    if indexOf(line,"address")!=null then
+      parts=split(line,":")
+      if len(parts)>1 then
+        ip=trim(parts[1])
+        if is_valid_ip(ip) then return ip
+      end if
+    end if
+  end for
+  return target
+end function
+// Get random public IP (avoid private ranges)
+getRandomIP=function
+  while true
+    a=floor(rnd*255)+1
+    b=floor(rnd*255)
+    c=floor(rnd*255)
+    d=floor(rnd*255)+1
+    ip=a+"."+b+"."+c+"."+d
+    // Skip private IP ranges
+    if a==10 then continue
+    if a==172 and b>=16 and b<=31 then continue
+    if a==192 and b==168 then continue
+    if a==127 then continue
+    if a==0 or a>=224 then continue
+    return ip
+  end while
+end function
+// Firewall blocked ports
+fwPorts={
+  "20":1,
+  "21":1,
+  "22":1,
+  "23":1,
+  "25":1,
+  "80":1,
+  "110":1,
+  "143":1,
+  "443":1,
+  "3306":1
+}
+// Parse firewall rules
+parseFirewallRules=function(rules)
+  result=[]
+  for rule in split(rules,char(10))
+    if not rule or len(rule)<5 then continue
+    parts=split(rule," ")
+    if len(parts)>=3 then push(result,ljust(parts[0],15)+" "+ljust(parts[1],10)+" "+parts[2])
+  end for
+  return result
+end function
+// ============================================================================
+// ARGUMENT PARSING
+// ============================================================================
+parseArgs=function(args)
+  result={}
+  result.target=null
+  result.remote=false
+  result.extended=false
+  if not args or len(args)==0 then return result
+  for arg in args
+    if len(arg)>0 and arg[0]=="-" then
+      for i in range(1,len(arg)-1)
+        ch=arg[i]
+        if ch=="r" then
+          result.remote=true
+        else if ch=="e" then
+          result.extended=true
+        end if
+      end for
+    else
+      if not result.target then result.target=arg
+    end if
+  end for
+  return result
+end function
+// ============================================================================
+// MAIN NMAP
+// ============================================================================
+if not params or len(params)==0 then
+  print green("================================================================")
+  print white("                    "+yellow("NMAP")+" - Network Port Scanner")
+  print green("================================================================")
+  print ""
+  print white("Usage:")
+  print "  nmap <ip>              Scan target IP address"
+  print "  nmap -r                Scan random IP"
+  print ""
+  print white("Options:")
+  print "  -e                     Extended info (WHOIS, firewall, ESSID)"
+  print ""
+  print white("Examples:")
+  print "  nmap 192.168.1.1       Scan router"
+  print "  nmap -r                Scan random target"
+  print "  nmap 10.0.0.1 -e       Scan with extended info"
+  print green("================================================================")
+  exit
+end if
+argv=parseArgs(params)
+// Determine target IP
+targetIP=null
+if argv.remote then
+  targetIP=getRandomIP()
+else if argv.target then
+  targetIP=argv.target
+else
+  showError("No target specified")
+  exit
+end if
+// Resolve hostname to IP
+resolvedIP=netLookup(targetIP)
+if not is_valid_ip(resolvedIP) then
+  showError("Invalid IP: "+targetIP)
+  exit
+end if
+// Get router for target
+router=null
+if is_lan_ip(resolvedIP) then router=get_router else router=get_router(resolvedIP)
+if not router then
+  showError("IP address not found: "+resolvedIP)
+  exit
+end if
+// Get port list
+ports=[]
+if not is_lan_ip(resolvedIP) then
+  usedPorts=used_ports(router)
+  if typeof(usedPorts)=="string" then
+    showError("Target unreachable: "+resolvedIP)
+    exit
+  end if
+  ports=[0]+usedPorts
+else
+  localRouterIP=local_ip(router)
+  if localRouterIP==resolvedIP then
+    ports=[0]+used_ports(router)
+  else
+    devPorts=device_ports(router,resolvedIP)
+    if typeof(devPorts)=="string" then
+      showError("Target unreachable: "+resolvedIP)
+      exit
+    end if
+    ports=[0]+devPorts
+  end if
+end if
+if not ports or len(ports)==0 then
+  showInfo("No ports found")
+  exit
+end if
+// Display header
+version="1.0"
+startMsg="Starting nmap v"+version+" at "+current_date
+print liteGrey(startMsg)
+print liteGrey("  Target IP: "+resolvedIP)
+// Scan ports
+portData={}
+for port in ports
+  if port==0 then
+    lanIP=null
+    if local_ip(router)!=resolvedIP then
+      hasWebPort=false
+      for portObj in ports
+        if portObj==0 then continue
+        if port_number(portObj)==8080 then
+          lanIP=get_lan_ip(portObj)
+          hasWebPort=true
+          break
+        end if
+      end for
+      if is_lan_ip(resolvedIP) and not hasWebPort then continue
+    end if
+    service="router"
+    version=kernel_version(router)
+    if not lanIP then lanIP=local_ip(router)
+    state=green("open")
+    entry={}
+    entry.port=green(str(port))
+    entry.state=state
+    entry.service=blue(service)
+    entry.version=blue(version)
+    entry.lan=lime(lanIP)
+    portData[__port_idx]=entry
+    continue
+  end if
+  info=split(port_info(router,port)," ")
+  service=info[0]
+  version=info[1]
+  lanIP=get_lan_ip(port)
+  portNum=port_number(port)
+  state="open"
+  if (is_closed(port) or hasIndex(fwPorts,str(portNum))) and not is_lan_ip(resolvedIP) then state="closed"
+  if state=="open" then state=green(state) else state=red(state)
+  entry={}
+  entry.port=green(str(portNum))
+  entry.state=state
+  entry.service=blue(service)
+  entry.version=blue(version)
+  entry.lan=lime(lanIP)
+  portData[__port_idx]=entry
+end for
+print liteGrey("Ports Found: "+len(portData))
+if not portData or len(portData)==0 then
+  showInfo("No open ports")
+  exit
+end if
+// Display port table
+columns=[]
+push(columns,join([grey("PORT"),grey("STATE"),grey("SERVICE"),grey("VERSION"),grey("LAN")],"  "))
+for entry in portData
+  data=entry.value
+  push(columns,join([data.port,data.state,data.service,data.version,data.lan],"  "))
+end for
+print format_columns(join(columns,char(10)))
+// Display extended info if requested
+if argv.extended then
+  print ""
+  print green("=== Extended Information ===")
+  essid=essid_name(router)
+  bssid=bssid_name(router)
+  if essid=="" then
+    print red("No ESSID")
+  else
+    print blue(ljust("ESSID",22))+white(" : ")+yellow(essid)
+    print blue(ljust("BSSID",22))+white(" : ")+yellow(bssid)
+  end if
+  print blue(ljust("Public IP",22))+white(" : ")+yellow(public_ip(router))
+  print blue(ljust("Private IP",22))+white(" : ")+yellow(local_ip(router))
+  whoisData=whois(public_ip(router))
+  if whoisData then
+    for line in split(whoisData,char(10))
+      if len(line)>1 then
+        line=line.replace(" ","")
+        parts=split(line,":")
+        if len(parts)>=2 then
+          key=parts[0]
+          value=join(parts[1:],":")
+          print blue(ljust(str(key),22))+yellow(" : ")+white(value)
+        end if
+      end if
+    end for
+  end if
+  print blue(ljust("Router Version",22))+yellow(" : ")+white(kernel_version(router))
+  rules=firewall_rules(router)
+  print ""
+  print green("Scanning firewall rules...")
+  if not rules or len(rules)==0 then
+    print green("Firewall rules: N/A")
+  else
+    fwData=parseFirewallRules(rules)
+    for rule in fwData
+      print white(rule)
+    end for
+  end if
+end if
