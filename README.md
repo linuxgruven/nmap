@@ -1,3 +1,5 @@
 # nmap
 nmap for grey hack
-I use greybel for all code insertions into the game
+Building nmap
+
+Make sure you have the vscode greybel addon installed
