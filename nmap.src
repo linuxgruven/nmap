@@ -94,19 +94,6 @@ getRandomIP=function
     return ip
   end while
 end function
-// Firewall blocked ports
-fwPorts={
-  "20":1,
-  "21":1,
-  "22":1,
-  "23":1,
-  "25":1,
-  "80":1,
-  "110":1,
-  "143":1,
-  "443":1,
-  "3306":1
-}
 // Parse firewall rules
 parseFirewallRules=function(rules)
   result=[]
@@ -255,7 +242,7 @@ for port in ports
   lanIP=get_lan_ip(port)
   portNum=port_number(port)
   state="open"
-  if (is_closed(port) or hasIndex(fwPorts,str(portNum))) and not is_lan_ip(resolvedIP) then state="closed"
+  if is_closed(port) and not is_lan_ip(resolvedIP) then state="closed"
   if state=="open" then state=green(state) else state=red(state)
   entry={}
   entry.port=green(str(portNum))
